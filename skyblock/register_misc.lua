@@ -33,87 +33,42 @@ minetest.register_on_respawnplayer(function(player)
 	return true
 end)
 
--- register globalstep after the server starts
-minetest.after(0.1, function()
-	local spawn_timer = 0
-	local spawn_throttle = 1
-
-	-- handle globalstep
-	minetest.register_globalstep(function(dtime)
-		spawn_timer = spawn_timer + dtime
-
-		-- only check once per throttle time
-		if spawn_timer > spawn_throttle then
-			for _,player in ipairs(minetest.get_connected_players()) do
-				local pos = player:getpos()
-				-- hit the bottom
-				if pos.y < skyblock.world_bottom then
-					local spawn = skyblock.get_spawn(player:get_player_name())
-					if minetest.env:get_node(spawn).name == 'skyblock:quest' then
-						player:set_hp(0)
-					else
-						skyblock.spawn_player(player)
-					end
-				end
-			end
-		end
-		
-		-- reset the spawn_timer
-		if spawn_timer > spawn_throttle then	
-			spawn_timer = 0
-		end	
-	
-	end)
-
-end)
+-- localization
+local y_bottom, c_acid
 
 -- register map generation
 minetest.register_on_generated(function(minp, maxp, seed)
+	if not y_bottom then
+		y_bottom = skyblock.world_bottom
+		c_acid = minetest.get_content_id("skyblock:acid")
+	end
+
 	-- do not handle mapchunks which are too heigh or too low
-	if( minp.y > 0 or maxp.y < 0) then
+	if minp.y > y_bottom then
 		return
 	end
 
-	local vm, area, data, emin, emax
+	local vm, emin, emax = minetest.get_mapgen_object("voxelmanip")
+	local data = vm:get_data()
+	local area = VoxelArea:new{MinEdge=emin, MaxEdge=emax}
 
-	-- if no voxelmanip data was passed on, read the data here
-	if not(vm) or not(area) or not(data) then
-		vm, emin, emax = minetest.get_mapgen_object('voxelmanip')
-		if not(vm) then
-			return
-		end
-		area = VoxelArea:new{
-			MinEdge={x=emin.x, y=emin.y, z=emin.z},
-			MaxEdge={x=emax.x, y=emax.y, z=emax.z},
-		}
-		data = vm:get_data()
-	end
-
-	-- add cloud floor
-	local cloud_y = skyblock.world_bottom-2
-	if minp.y<=cloud_y and maxp.y>=cloud_y then 
-		local id_cloud = minetest.get_content_id('default:cloud')
-		for x=minp.x,maxp.x do
-			for z=minp.z,maxp.z do
-				data[area:index(x,cloud_y,z)] = id_cloud
-			end
-		end
-	end
-
-	-- add world_bottom_node
-	if skyblock.world_bottom_node ~= 'air' then
-		local id_bottom = minetest.get_content_id(skyblock.world_bottom_node)
-		local y_start = math.max(cloud_y+1,minp.y)
-		local y_end   = math.min(skyblock.start_height,maxp.y)
-		for x=minp.x,maxp.x do
-			for z=minp.z,maxp.z do
-				for y=y_start, y_end do
-					data[area:index(x,y,z)] = id_bottom
+	-- avoid that liquids flown down spread
+	if maxp.y >= y_bottom then
+		for z = minp.z,maxp.z do
+			for x = minp.x,maxp.x do
+				if (z+x)%2 == 0 then
+					data[area:index(x,y_bottom,z)] = c_acid
 				end
 			end
 		end
+		maxp.y = y_bottom-1
 	end
-	
+
+	-- the atmosphere is bad for Sam
+	for p_pos in area:iterp(minp, maxp) do
+		data[p_pos] = c_acid
+	end
+
 	-- add starting blocks
 	--[[
 	local start_pos_list = skyblock.get_start_positions_in_mapchunk(minp, maxp)
@@ -127,13 +82,13 @@ minetest.register_on_generated(function(minp, maxp, seed)
 	vm:calc_lighting(emin,emax)
 	vm:write_to_map(data)
 	vm:update_liquids()
-end) 
+end)
 
 
 -- no placing low nodes
-minetest.register_on_placenode(function(pos, newnode, placer, oldnode)
-	if pos.y <= skyblock.world_bottom then
-		minetest.env:remove_node(pos)
+minetest.register_on_placenode(function(pos)
+	if pos.y < y_bottom then
+		minetest.remove_node(pos)
 		return true -- give back item
 	end
 end)
